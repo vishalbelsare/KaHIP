@@ -31,7 +31,7 @@
 #include "../lib/data_structure/matrix/normal_matrix.h"
 #include "../lib/data_structure/matrix/online_distance_matrix.h"
 #include "../lib/mapping/mapping_algorithms.h"
-
+#include "../lib/spac/spac.h"
 
 using namespace std;
 
@@ -596,6 +596,8 @@ void internal_processmapping_call(PartitionConfig & partition_config,
 
         forall_nodes(G, node) {
                 G.setPartitionIndex(node, perm_rank[G.getPartitionIndex(node)]);
+                // update part IDs after mapping algorithm
+                part[node] = G.getPartitionIndex(node);
         } endfor
 
         *qap = (int)internal_qap;
@@ -647,9 +649,52 @@ void process_mapping(int* n, int* vwgt, int* xadj,
                 partition_config.distances.push_back(distance_parameter[i]);
         }
 
+        // compute k 
+        for( unsigned int i = 0; i < partition_config.group_sizes.size(); i++) {
+                partition_config.k *= partition_config.group_sizes[i];
+        }
+
         partition_config.seed = seed;
         internal_processmapping_call(partition_config, suppress_output, n, vwgt, xadj, adjcwgt, adjncy,  mode_mapping, imbalance, edgecut, qap, part);
 
 };
+
+void edge_partitioning(int* n, int* vwgt, int* xadj, 
+                   int* adjcwgt, int* adjncy, int* nparts, 
+                   double* imbalance, bool suppress_output, int seed, int mode, 
+                   int* vertexcut, int* part, int infinity_edge_weight) {
+        configuration cfg;
+        PartitionConfig partition_config;
+        partition_config.k = *nparts;
+
+        internal_kaffpa_set_configuration(cfg, partition_config, mode);
+
+        partition_config.seed = seed;
+        partition_config.imbalance = 100*(*imbalance);
+
+        graph_access G;     
+        internal_build_graph( partition_config, n, vwgt, xadj, adjcwgt, adjncy, G);
+
+        spac splitter(G, infinity_edge_weight);
+        graph_access &split_G = splitter.construct_split_graph();
+
+        balance_configuration bc;
+        bc.configurate_balance(partition_config, split_G);
+
+        std::srand(static_cast<unsigned int>(seed));
+        random_functions::setSeed(seed);
+
+        graph_partitioner partitioner;
+        partitioner.perform_partitioning(partition_config, split_G);
+
+        splitter.fix_cut_dominant_edges();
+        std::vector<PartitionID> edge_partition = splitter.project_partition();
+
+        *vertexcut = static_cast<int>(splitter.calculate_vertex_cut(edge_partition));
+
+        for (std::size_t i = 0; i < edge_partition.size(); ++i) {
+            part[i] = edge_partition[i];
+        }
+}
 
 
